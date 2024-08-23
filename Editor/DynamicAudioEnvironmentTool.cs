@@ -117,8 +117,30 @@ public class DynamicAudioEnvironmentTool : EditorWindow
         GUILayout.Space(10);
         GUILayout.BeginVertical("box");
         GUILayout.Label("Ambient Settings", EditorStyles.largeLabel);
+        AmbientSetting previousSetting = selectedAmbientSetting;
         selectedAmbientSetting = (AmbientSetting)EditorGUILayout.EnumPopup("Ambient Setting", selectedAmbientSetting);
-        ApplyAmbientSetting(selectedAmbientSetting);
+        if (previousSetting != selectedAmbientSetting)
+        {
+            ApplyAmbientSetting(selectedAmbientSetting);
+        }
+        GUILayout.EndVertical();
+
+        GUILayout.Space(10);
+        GUILayout.BeginVertical("box");
+        GUILayout.Label("Custom Audio Settings", EditorStyles.largeLabel);
+        volume = EditorGUILayout.Slider("Volume", volume, 0, 1);
+        spatialBlend = EditorGUILayout.Slider("Spatial Blend", spatialBlend, 0, 1);
+        rolloffMode = (AudioRolloffMode)EditorGUILayout.EnumPopup("Rolloff Mode", rolloffMode);
+        minDistance = EditorGUILayout.FloatField("Min Distance", minDistance);
+        maxDistance = EditorGUILayout.FloatField("Max Distance", maxDistance);
+
+        if (selectedAmbientSetting != AmbientSetting.Custom)
+        {
+            if (GUILayout.Button("Switch to Custom"))
+            {
+                selectedAmbientSetting = AmbientSetting.Custom;
+            }
+        }
         GUILayout.EndVertical();
 
         GUILayout.Space(10);
@@ -130,7 +152,7 @@ public class DynamicAudioEnvironmentTool : EditorWindow
         GUILayout.Space(10);
         GUILayout.BeginVertical("box");
         GUILayout.Label("No Reverb Zones", EditorStyles.largeLabel);
-        EditorGUILayout.HelpBox("Add GameObjects to define no-reverb zones. Reverb zones will not be placed within these areas.", MessageType.Info);
+        EditorGUILayout.HelpBox("Add GameObjects to define no-reverb zones. Reverb zones will be placed normally and then removed if they intersect with these areas.", MessageType.Info);
         SerializedObject so = new SerializedObject(this);
         SerializedProperty noReverbZonesProp = so.FindProperty("noReverbZones");
         EditorGUILayout.PropertyField(noReverbZonesProp, true);
@@ -159,16 +181,6 @@ public class DynamicAudioEnvironmentTool : EditorWindow
 
         GUILayout.Label("Test Audio Clip", EditorStyles.largeLabel);
         testAudioClip = (AudioClip)EditorGUILayout.ObjectField("Audio Clip", testAudioClip, typeof(AudioClip), false);
-
-        if (selectedAmbientSetting == AmbientSetting.Custom)
-        {
-            GUILayout.Label("Custom Audio Settings", EditorStyles.largeLabel);
-            volume = EditorGUILayout.Slider("Volume", volume, 0, 1);
-            spatialBlend = EditorGUILayout.Slider("Spatial Blend", spatialBlend, 0, 1);
-            rolloffMode = (AudioRolloffMode)EditorGUILayout.EnumPopup("Rolloff Mode", rolloffMode);
-            minDistance = EditorGUILayout.FloatField("Min Distance", minDistance);
-            maxDistance = EditorGUILayout.FloatField("Max Distance", maxDistance);
-        }
 
         if (GUILayout.Button("Analyze Scene Geometry and Place Reverb Zones", GUILayout.Height(30)))
         {
@@ -300,7 +312,7 @@ public class DynamicAudioEnvironmentTool : EditorWindow
                 continue;
 
             MeshRenderer renderer = obj.GetComponent<MeshRenderer>();
-            if (renderer != null && !IsInsideNoReverbZone(renderer.bounds))
+            if (renderer != null)
             {
                 Vector3 position = obj.transform.position;
                 if (IsPositionFarFromClusters(position))
@@ -310,23 +322,44 @@ public class DynamicAudioEnvironmentTool : EditorWindow
             }
         }
 
+        RemoveReverbZonesInNoReverbAreas();
+
         EditorUtility.ClearProgressBar();
         sceneAnalyzed = true;
         sceneChanged = false;
         Debug.Log("Scene geometry analysis complete, reverb zones placed.");
     }
 
-    private bool IsInsideNoReverbZone(Bounds bounds)
+    private void RemoveReverbZonesInNoReverbAreas()
     {
-        foreach (var zone in noReverbZones)
+        List<Transform> zonesToRemove = new List<Transform>();
+
+        // Identify all reverb zones that should be removed
+        foreach (Transform reverbZone in reverbZoneParent.transform)
         {
-            if (zone != null && zone.GetComponent<Collider>().bounds.Intersects(bounds))
+            Vector3 reverbZonePosition = reverbZone.position;
+
+            foreach (var zone in noReverbZones)
             {
-                return true;
+                if (zone != null && zone.GetComponent<Collider>().bounds.Contains(reverbZonePosition))
+                {
+                    zonesToRemove.Add(reverbZone);
+                    break;
+                }
             }
         }
-        return false;
+
+        // Destroy all identified reverb zones
+        foreach (Transform zone in zonesToRemove)
+        {
+            Debug.Log($"Removed reverb zone inside no-reverb zone: {zone.name}");
+            DestroyImmediate(zone.gameObject);
+            
+        }
     }
+
+
+
 
     private bool IsPositionFarFromClusters(Vector3 position)
     {
@@ -438,6 +471,18 @@ public class DynamicAudioEnvironmentTool : EditorWindow
         {
             return AudioClip.Create("SampleClip", 44100, 1, 44100, false);
         }
+    }
+
+    private bool IsInsideNoReverbZone(Bounds bounds)
+    {
+        foreach (var zone in noReverbZones)
+        {
+            if (zone != null && zone.GetComponent<Collider>().bounds.Intersects(bounds))
+            {
+                return true;
+            }
+        }
+        return false;
     }
 
     private void OnDrawGizmos()
